@@ -1,5 +1,6 @@
 import SwiftUI
 import ApplicationServices
+import Combine
 
 struct SettingsView: View {
     @ObservedObject var controller: AppController
@@ -24,8 +25,8 @@ struct SettingsView: View {
             }
 
             Section("Status") {
-                status("Accessibility", ok: accessibilityOK, fix: Permissions.openAccessibilitySettings)
-                status("Screen Recording", ok: screenOK, fix: Permissions.openScreenRecordingSettings)
+                status("Accessibility", ok: accessibilityOK) { Permissions.openAccessibilitySettings() }
+                status("Screen Recording", ok: screenOK) { Permissions.openScreenRecordingSettings() }
                 LabeledContent("On-device model") {
                     Text(AIEngine.unavailableReason ?? "Ready")
                         .foregroundStyle(AIEngine.unavailableReason == nil ? Color.green : Color.orange)
@@ -41,7 +42,7 @@ struct SettingsView: View {
         }
     }
 
-    private func status(_ title: String, ok: Bool, fix: @escaping () -> Void) -> some View {
+    private func status(_ title: String, ok: Bool, fix: @escaping @MainActor () -> Void) -> some View {
         LabeledContent(title) {
             if ok {
                 Text("Granted").foregroundStyle(.green)

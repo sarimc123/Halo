@@ -1,5 +1,16 @@
 import SwiftUI
 import FoundationModels
+import Combine
+
+extension HaloAction {
+    /// Actions whose output is meant to replace the highlighted text.
+    var replacesSelection: Bool {
+        switch self {
+        case .rewrite, .grammar, .custom: true
+        case .explain, .summarize, .reply: false
+        }
+    }
+}
 
 @MainActor
 final class CardModel: ObservableObject {
@@ -81,6 +92,10 @@ struct ResultCardView: View {
     let onClose: () -> Void
     @FocusState private var promptFocused: Bool
 
+    private var canReplace: Bool {
+        model.notice == nil && model.source == .selection && model.action.replacesSelection
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             header
@@ -109,13 +124,20 @@ struct ResultCardView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Image(systemName: model.notice == nil ? model.action.symbol : "info.circle")
             Text(model.notice == nil ? model.action.title : "Halo")
             if model.isRunning {
                 ProgressView().controlSize(.mini).padding(.leading, 2)
             }
             Spacer()
+            if canReplace {
+                Button("Replace", action: onApply)
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(Color.accentColor)
+                    .disabled(model.output.isEmpty || model.isRunning)
+                    .help("Replace the highlighted text with this result")
+            }
             if !model.output.isEmpty {
                 Button { Clipboard.copy(model.output) } label: {
                     Image(systemName: "doc.on.doc")
@@ -123,10 +145,7 @@ struct ResultCardView: View {
                 .buttonStyle(.plain)
                 .help("Copy")
             }
-            DotButton(color: Color.gray.opacity(0.45), help: "Close", action: onClose)
-            DotButton(color: .red, help: model.source == .selection ? "Apply" : "Copy and close", action: onApply)
-                .disabled(model.output.isEmpty || model.isRunning)
-                .opacity(model.output.isEmpty || model.isRunning ? 0.35 : 1)
+            DotButton(color: .red, help: "Close", action: onClose)
         }
         .font(.system(size: 12, weight: .semibold))
         .foregroundStyle(.secondary)

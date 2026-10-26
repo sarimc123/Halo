@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Combine
 
 enum TextSource { case selection, screen }
 
@@ -13,6 +14,7 @@ final class AppController: ObservableObject {
     @Published var showSelectionDot: Bool = UserDefaults.standard.object(forKey: "showSelectionDot") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showSelectionDot, forKey: "showSelectionDot") }
     }
+    @Published private(set) var accessibilityGranted = AXIsProcessTrusted()
 
     private var wheel: WheelController?
     private var cardPanel: FloatingPanel?
@@ -34,18 +36,19 @@ final class AppController: ObservableObject {
         hotkeys.onCancel = { [weak self] in self?.closeWheel() }
         watcher.onSelection = { [weak self] text in self?.showDot(for: text) }
         watcher.onDismiss = { [weak self] in self?.hideDot() }
-        startWhenTrusted()
+        monitorPermissions()
     }
 
-    /// Retries until Accessibility permission is granted.
-    private func startWhenTrusted() {
-        if hotkeys.start() {
-            watcher.start()
-            return
-        }
+    /// Starts Halo as soon as Accessibility is granted, and tracks denial/revocation for the menu bar.
+    private func monitorPermissions() {
         Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2))
-            self?.startWhenTrusted()
+            while !Task.isCancelled {
+                guard let self else { return }
+                let trusted = AXIsProcessTrusted()
+                if trusted != self.accessibilityGranted { self.accessibilityGranted = trusted }
+                if trusted && self.hotkeys.start() { self.watcher.start() }
+                try? await Task.sleep(for: .seconds(2))
+            }
         }
     }
 
@@ -150,7 +153,8 @@ final class AppController: ObservableObject {
         let size = CGSize(width: 28, height: 28)
         let panel = FloatingPanel(size: size)
         panel.setContent(SelectionDotView { [weak self] in self?.dotClicked(text: text) })
-        panel.setFrameOrigin(NSPoint(x: mouse.x + 6, y: mouse.y - size.height - 6))
+        let origin = NSPoint(x: mouse.x + 6, y: mouse.y - size.height - 6)
+        panel.setFrameOrigin(ScreenGeometry.clampOrigin(origin, size: size, near: mouse))
         panel.orderFrontRegardless()
         dotPanel = panel
 
@@ -243,12 +247,7 @@ final class AppController: ObservableObject {
     }
 
     private func placement(for size: CGSize, near point: NSPoint) -> NSPoint {
-        let screen = NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) } ?? NSScreen.main
-        let visible = screen?.visibleFrame ?? .zero
-        var x = point.x + 4
-        var y = point.y - size.height - 4
-        x = min(max(x, visible.minX), visible.maxX - size.width)
-        y = min(max(y, visible.minY), visible.maxY - size.height)
-        return NSPoint(x: x, y: y)
+        let origin = NSPoint(x: point.x + 4, y: point.y - size.height - 4)
+        return ScreenGeometry.clampOrigin(origin, size: size, near: point)
     }
 }

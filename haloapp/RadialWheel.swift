@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Combine
 
 @MainActor
 final class WheelModel: ObservableObject {
@@ -19,17 +20,20 @@ final class WheelController {
     let model = WheelModel()
     var onPick: ((HaloAction?) -> Void)?
 
-    private let center: NSPoint
+    private let center: NSPoint   // where the wheel is drawn
+    private let anchor: NSPoint   // where hover distance/angle is measured from
     private let panel: FloatingPanel
     private var timer: Timer?
     private var monitors: [Any] = []
 
-    init(center: NSPoint, mode: Mode) {
-        self.center = center
+    init(center requested: NSPoint, mode: Mode) {
+        let clamped = ScreenGeometry.clampCenter(requested, radius: Self.outerRadius + 8)
+        self.center = clamped
+        self.anchor = mode == .hold ? requested : clamped
         self.mode = mode
         panel = FloatingPanel(size: CGSize(width: Self.size, height: Self.size))
         panel.setContent(RadialWheelView(model: model))
-        panel.setFrameOrigin(NSPoint(x: center.x - Self.size / 2, y: center.y - Self.size / 2))
+        panel.setFrameOrigin(NSPoint(x: clamped.x - Self.size / 2, y: clamped.y - Self.size / 2))
         panel.ignoresMouseEvents = (mode == .hold)
         panel.orderFrontRegardless()
 
@@ -49,8 +53,8 @@ final class WheelController {
 
     private func updateHover() {
         let mouse = NSEvent.mouseLocation
-        let dx = mouse.x - center.x
-        let dy = mouse.y - center.y
+        let dx = mouse.x - anchor.x
+        let dy = mouse.y - anchor.y
         let distance = hypot(dx, dy)
 
         // Dead zone in the middle; in click mode, ignore points far outside the ring.

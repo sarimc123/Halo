@@ -3,12 +3,73 @@ import ApplicationServices
 
 @MainActor
 enum SelectionReader {
-    /// Accessibility first; falls back to a simulated ⌘C for apps that don't expose selected text.
+    /// Apps where the selection dot should never fire ⌘C (it copies shapes, not text).
+    private static let watcherBlocklist: Set<String> = [
+        "com.figma.Desktop",
+    ]
+    /// Non-Chromium apps that don't expose selected text via Accessibility but handle ⌘C fine.
+    private static let extraCopyFallbackApps: Set<String> = [
+        "com.sublimetext.4",
+    ]
+    private static var axEnabledPIDs: Set<pid_t> = []
+    private static var chromiumCache: [String: Bool] = [:]
+
+    /// Used by the hotkey.
     static func selectedText() async -> String? {
+        guard let app = frontmostOtherApp() else { return nil }
+        enableAccessibility(for: app)
         if let axText = axSelectedText() {
             return axText.isEmpty ? nil : axText
         }
+        guard canUseCopyFallback(app) else { return nil }
         return await copySelection()
+    }
+
+    /// Used by the selection dot. Returns trimmed text.
+    static func selectionForWatcher() async -> String? {
+        guard let app = frontmostOtherApp() else { return nil }
+        enableAccessibility(for: app)
+        if let axText = axSelectedText() {
+            let trimmed = axText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let id = app.bundleIdentifier, watcherBlocklist.contains(id) { return nil }
+        guard canUseCopyFallback(app) else { return nil }
+        return await copySelection()?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func frontmostOtherApp() -> NSRunningApplication? {
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return nil }
+        return app
+    }
+
+    /// Only fire a simulated ⌘C where it's needed; elsewhere it triggers the system error beep.
+    private static func canUseCopyFallback(_ app: NSRunningApplication) -> Bool {
+        if let id = app.bundleIdentifier, extraCopyFallbackApps.contains(id) { return true }
+        return isChromiumBased(app)
+    }
+
+    /// Chrome, Edge, Brave, Arc and Electron apps all ship a "<Name> Framework.framework".
+    private static func isChromiumBased(_ app: NSRunningApplication) -> Bool {
+        guard let id = app.bundleIdentifier, let url = app.bundleURL else { return false }
+        if let cached = chromiumCache[id] { return cached }
+        let frameworks = url.appendingPathComponent("Contents/Frameworks").path
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: frameworks)) ?? []
+        let result = names.contains { $0.hasSuffix(" Framework.framework") }
+        chromiumCache[id] = result
+        return result
+    }
+
+    /// Electron apps (Slack, VS Code, Discord…) only build their accessibility tree when asked.
+    private static func enableAccessibility(for app: NSRunningApplication) {
+        let pid = app.processIdentifier
+        guard !axEnabledPIDs.contains(pid) else { return }
+        let element = AXUIElementCreateApplication(pid)
+        let result = AXUIElementSetAttributeValue(element, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        if result == .success || result == .attributeUnsupported {
+            axEnabledPIDs.insert(pid)
+        }
     }
 
     /// nil means the focused element doesn't expose selected text.

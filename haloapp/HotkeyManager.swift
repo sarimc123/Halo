@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import Combine
 
 struct Hotkey: Codable, Equatable {
     var keyCode: UInt16
@@ -82,7 +83,11 @@ final class HotkeyManager: ObservableObject {
     /// Returns false until Accessibility permission is granted.
     @discardableResult
     func start() -> Bool {
-        guard tap == nil else { return true }
+        if let tap {
+            // Re-arm if macOS disabled the tap (e.g. permission toggled off and back on).
+            if !CGEvent.tapIsEnabled(tap: tap) { CGEvent.tapEnable(tap: tap, enable: true) }
+            return true
+        }
         guard AXIsProcessTrusted() else { return false }
 
         let mask: CGEventMask =
