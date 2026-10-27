@@ -50,11 +50,19 @@ enum AIEngine {
     /// The on-device model has a small context window, so long input is clipped.
     static let maxInputCharacters = 8_000
 
-    static let instructions = """
-    You are Halo, a concise assistant built into macOS. \
-    Respond with only the requested result: no preamble, no surrounding quotes, no headings. \
-    Use the same language as the input text.
-    """
+    /// Built fresh for each chat so the model knows the real date and time (it has no clock of its own).
+    static var instructions: String {
+        let now = Date.now
+        let date = now.formatted(date: .complete, time: .omitted)
+        let time = now.formatted(date: .omitted, time: .shortened)
+        let zone = TimeZone.current.identifier
+        return """
+        You are Halo, a concise assistant built into macOS. \
+        Respond with only the requested result: no preamble, no surrounding quotes, no headings. \
+        Use the same language as the input text. \
+        Today is \(date) and the local time is \(time) (\(zone)). Use this whenever the date or time matters.
+        """
+    }
 
     static var unavailableReason: String? {
         switch SystemLanguageModel.default.availability {
