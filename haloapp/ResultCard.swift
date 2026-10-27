@@ -40,6 +40,8 @@ final class CardModel: ObservableObject {
     private var sessionInstructions = ""
     private var task: Task<Void, Never>?
     private var runID = UUID()
+    /// Set once a copied summary has been retried, so it's only retried one time.
+    private var retriedEcho = false
     @Published private var sentChars = 0
 
     init(action: HaloAction, input: String, source: TextSource, notice: String?) {
@@ -97,15 +99,20 @@ final class CardModel: ObservableObject {
         error = nil
         draft = ""
         sentChars = 0
+        retriedEcho = false
         run()
     }
 
     func cancel() { stop() }
 
-    private func send(prompt: String, shownAsUser: String?) {
+    private func send(prompt: String, shownAsUser: String?, freshSession: Bool = false) {
         if let reason = AIEngine.unavailableReason {
             error = reason
             return
+        }
+        if freshSession {
+            session = nil
+            sentChars = 0
         }
         if let shownAsUser { messages.append(ChatMessage(role: .user, text: shownAsUser)) }
         let reply = ChatMessage(role: .assistant, text: "")
@@ -116,7 +123,7 @@ final class CardModel: ObservableObject {
         if let existing = self.session {
             session = existing
         } else {
-            sessionInstructions = AIEngine.instructions
+            sessionInstructions = AIEngine.instructions(for: action)
             session = LanguageModelSession(instructions: sessionInstructions)
             self.session = session
         }
@@ -138,8 +145,30 @@ final class CardModel: ObservableObject {
                 if runID == id { self.error = error.localizedDescription }
             }
             messages.removeAll { $0.id == reply.id && $0.text.isEmpty }
-            if runID == id { isRunning = false }
+            guard runID == id else { return }
+
+            if handleCopiedSummary(replyID: reply.id) { return }
+            isRunning = false
         }
+    }
+
+    /// If the first summary mostly repeats the original, retries once with a stricter prompt.
+    /// Returns true when a retry was started.
+    private func handleCopiedSummary(replyID: UUID) -> Bool {
+        guard action == .summarize,
+              messages.count == 1,
+              let text = messages.first(where: { $0.id == replyID })?.text,
+              EchoCheck.isEcho(text, of: input)
+        else { return false }
+
+        if retriedEcho {
+            error = "This summary is still close to the original. Try Short length, or ask for a shorter version."
+            return false
+        }
+        retriedEcho = true
+        messages.removeAll { $0.id == replyID }
+        send(prompt: HaloAction.summaryRetryPrompt(for: AIEngine.clip(input)), shownAsUser: nil, freshSession: true)
+        return true
     }
 
     private func update(_ id: UUID, text: String) {
@@ -311,7 +340,7 @@ struct ResultCardView: View {
                                  Self.maxCardSize.height + pad)
                 window.setFrame(
                     NSRect(x: start.frame.minX, y: start.frame.maxY - height, width: width, height: height),
-                    display: true
+                    display: false
                 )
             }
             .onEnded { _ in
