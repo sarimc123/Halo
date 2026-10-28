@@ -26,6 +26,8 @@ final class AppController: ObservableObject {
     private var targetApp: NSRunningApplication?
     private var pendingText: Task<String?, Never>?
     private var pendingSource: TextSource = .selection
+    /// True while the drag-to-select screen overlay is up, so a second one can't open on top of it.
+    private var isSelectingRegion = false
 
     // MARK: Startup
 
@@ -55,7 +57,7 @@ final class AppController: ObservableObject {
     // MARK: Hotkey (hold → wheel → release)
 
     private func hotkeyPressed() {
-        guard wheel == nil else { return }
+        guard wheel == nil, !isSelectingRegion else { return }
         hideDot()
         rememberTargetApp()
         pendingSource = .selection
@@ -114,12 +116,18 @@ final class AppController: ObservableObject {
     }
 
     private func readScreen(then action: HaloAction?) async {
+        guard !isSelectingRegion else { return }
         guard CGPreflightScreenCaptureAccess() else {
             _ = CGRequestScreenCaptureAccess()
             showNotice("Allow Screen Recording for Halo in System Settings, then relaunch it.")
             return
         }
-        guard let region = await RegionSelector.select() else { return }
+
+        hideDot()
+        isSelectingRegion = true
+        let selected = await RegionSelector.select()
+        isSelectingRegion = false
+        guard let region = selected else { return }
         try? await Task.sleep(for: .milliseconds(80))
 
         do {
@@ -145,7 +153,7 @@ final class AppController: ObservableObject {
     // MARK: Selection dot
 
     private func showDot(for text: String) {
-        guard showSelectionDot, wheel == nil else { return }
+        guard showSelectionDot, wheel == nil, !isSelectingRegion else { return }
         hideDot()
         rememberTargetApp()
 
@@ -221,7 +229,7 @@ final class AppController: ObservableObject {
         }
     }
 
-    /// Red dot: paste over the selection / at the cursor, or copy if the text came from the screen.
+    /// Replace: paste over the selection, or copy if the text came from the screen.
     private func apply(_ text: String, source: TextSource) {
         closeCard()
         guard !text.isEmpty else { return }

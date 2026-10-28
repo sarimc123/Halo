@@ -13,14 +13,24 @@ struct Hotkey: Codable, Equatable {
 
 enum ModifierKeys {
     static let relevant: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
+    /// Modifiers that make a combo safe to use as a hotkey (⇧ alone would swallow capital letters).
+    static let combining: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl]
 
-    static let byKeyCode: [UInt16: (flag: CGEventFlags, name: String)] = [
-        54: (.maskCommand, "Right ⌘"), 55: (.maskCommand, "Left ⌘"),
-        56: (.maskShift, "Left ⇧"), 60: (.maskShift, "Right ⇧"),
-        58: (.maskAlternate, "Left ⌥"), 61: (.maskAlternate, "Right ⌥"),
-        59: (.maskControl, "Left ⌃"), 62: (.maskControl, "Right ⌃"),
-        63: (.maskSecondaryFn, "Fn"),
+    /// `device` is the left/right-specific bit (NX_DEVICE…KEYMASK), so Left ⌥ and Right ⌥ are told apart.
+    static let byKeyCode: [UInt16: (flag: CGEventFlags, device: UInt64, name: String)] = [
+        54: (.maskCommand, 0x10, "Right ⌘"), 55: (.maskCommand, 0x08, "Left ⌘"),
+        56: (.maskShift, 0x02, "Left ⇧"), 60: (.maskShift, 0x04, "Right ⇧"),
+        58: (.maskAlternate, 0x20, "Left ⌥"), 61: (.maskAlternate, 0x40, "Right ⌥"),
+        59: (.maskControl, 0x01, "Left ⌃"), 62: (.maskControl, 0x2000, "Right ⌃"),
+        63: (.maskSecondaryFn, 0, "Fn"),
     ]
+
+    /// True if this exact physical modifier key is down.
+    static func isDown(_ keyCode: UInt16, flags: CGEventFlags) -> Bool {
+        guard let info = byKeyCode[keyCode] else { return false }
+        if info.device != 0 { return flags.rawValue & info.device != 0 }
+        return flags.contains(info.flag)
+    }
 
     static func symbols(_ flags: CGEventFlags) -> String {
         var s = ""
@@ -39,6 +49,9 @@ enum KeyNames {
         98: "F7", 100: "F8", 101: "F9", 109: "F10", 103: "F11", 111: "F12",
         123: "←", 124: "→", 125: "↓", 126: "↑",
     ]
+
+    /// F-keys are the only keys allowed as a hotkey without ⌃, ⌥ or ⌘.
+    static let functionKeys: Set<UInt16> = [122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111]
 
     static func name(for keyCode: UInt16, event: CGEvent) -> String {
         if let name = special[keyCode] { return name }
@@ -93,7 +106,10 @@ final class HotkeyManager: ObservableObject {
         let mask: CGEventMask =
             (CGEventMask(1) << CGEventType.keyDown.rawValue) |
             (CGEventMask(1) << CGEventType.keyUp.rawValue) |
-            (CGEventMask(1) << CGEventType.flagsChanged.rawValue)
+            (CGEventMask(1) << CGEventType.flagsChanged.rawValue) |
+            (CGEventMask(1) << CGEventType.leftMouseDown.rawValue) |
+            (CGEventMask(1) << CGEventType.rightMouseDown.rawValue) |
+            (CGEventMask(1) << CGEventType.otherMouseDown.rawValue)
 
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
@@ -120,15 +136,24 @@ final class HotkeyManager: ObservableObject {
         // Ignore the ⌘C / ⌘V that Halo posts itself.
         if event.getIntegerValueField(.eventSourceUserData) == Keyboard.syntheticTag { return false }
 
+        // A click while the hotkey is held means it's being used for something else (e.g. ⌥-drag) → cancel.
+        if type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown {
+            if isHeld && !isRecording {
+                isHeld = false
+                onCancel?()
+            }
+            return false
+        }
+
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
 
         if isRecording { return record(type: type, keyCode: keyCode, flags: flags, event: event) }
 
         if hotkey.modifierOnly {
-            guard let info = ModifierKeys.byKeyCode[hotkey.keyCode] else { return false }
+            guard ModifierKeys.byKeyCode[hotkey.keyCode] != nil else { return false }
             if type == .flagsChanged && keyCode == hotkey.keyCode {
-                let down = flags.contains(info.flag)
+                let down = ModifierKeys.isDown(keyCode, flags: flags)
                 if down && !isHeld { isHeld = true; onPress?() }
                 else if !down && isHeld { isHeld = false; onRelease?() }
                 return false
@@ -163,6 +188,10 @@ final class HotkeyManager: ObservableObject {
         case .keyDown:
             if keyCode == 53 { isRecording = false; return true } // Esc cancels
             let mods = flags.intersection(ModifierKeys.relevant)
+            // A plain key (or ⇧ + key) would be swallowed everywhere and break typing; keep recording instead.
+            guard !mods.intersection(ModifierKeys.combining).isEmpty || KeyNames.functionKeys.contains(keyCode) else {
+                return true
+            }
             hotkey = Hotkey(
                 keyCode: keyCode,
                 modifiers: mods.rawValue,
@@ -173,7 +202,7 @@ final class HotkeyManager: ObservableObject {
             return true
         case .flagsChanged:
             guard let info = ModifierKeys.byKeyCode[keyCode] else { return false }
-            if flags.contains(info.flag) {
+            if ModifierKeys.isDown(keyCode, flags: flags) {
                 recordingModifier = keyCode
             } else if recordingModifier == keyCode {
                 hotkey = Hotkey(keyCode: keyCode, modifiers: 0, modifierOnly: true, label: info.name)

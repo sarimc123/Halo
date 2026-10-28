@@ -15,6 +15,9 @@ enum SelectionReader {
     private static let textRoles: Set<String> = [
         "AXTextArea", "AXTextField", "AXComboBox", "AXWebArea", "AXStaticText",
     ]
+    /// How long to wait for another app to answer an Accessibility request.
+    /// The hotkey listener shares this thread, so a hung app must not block it for long.
+    private static let axTimeout: Float = 0.3
     private static var axEnabledPIDs: Set<pid_t> = []
     private static var chromiumCache: [String: Bool] = [:]
 
@@ -67,6 +70,8 @@ enum SelectionReader {
 
     private static func readAX() -> AXRead {
         let system = AXUIElementCreateSystemWide()
+        // Set on the system-wide element, this applies to every Accessibility call Halo makes.
+        AXUIElementSetMessagingTimeout(system, axTimeout)
         guard let focused = element(attribute(system, kAXFocusedUIElementAttribute)) else {
             return .unreadable(role: nil)
         }
@@ -114,6 +119,7 @@ enum SelectionReader {
         let pid = app.processIdentifier
         guard !axEnabledPIDs.contains(pid) else { return }
         let el = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(el, axTimeout)
         let result = AXUIElementSetAttributeValue(el, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         if result == .success || result == .attributeUnsupported {
             axEnabledPIDs.insert(pid)
@@ -169,7 +175,8 @@ enum Keyboard {
     static let syntheticTag: Int64 = 0x48414C4F // "HALO"
 
     static func press(_ keyCode: CGKeyCode, flags: CGEventFlags) {
-        let source = CGEventSource(stateID: .combinedSessionState)
+        // Private state keeps keys the user is physically holding (like the ⌥ hotkey) out of the event.
+        let source = CGEventSource(stateID: .privateState)
         for down in [true, false] {
             guard let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: down) else { continue }
             event.flags = flags
