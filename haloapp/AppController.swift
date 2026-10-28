@@ -29,16 +29,24 @@ final class AppController: ObservableObject {
     /// True while the drag-to-select screen overlay is up, so a second one can't open on top of it.
     private var isSelectingRegion = false
 
+    private static let onboardingKey = "hasCompletedOnboarding"
+    private var onboardingWindow: NSWindow?
+
     // MARK: Startup
 
     func start() {
-        Permissions.promptAccessibility()
         hotkeys.onPress = { [weak self] in self?.hotkeyPressed() }
         hotkeys.onRelease = { [weak self] in self?.hotkeyReleased() }
         hotkeys.onCancel = { [weak self] in self?.closeWheel() }
         watcher.onSelection = { [weak self] text in self?.showDot(for: text) }
         watcher.onDismiss = { [weak self] in self?.hideDot() }
         monitorPermissions()
+
+        if UserDefaults.standard.bool(forKey: Self.onboardingKey) {
+            Permissions.promptAccessibility()
+        } else {
+            showOnboarding()
+        }
     }
 
     /// Starts Halo as soon as Accessibility is granted, and tracks denial/revocation for the menu bar.
@@ -52,6 +60,39 @@ final class AppController: ObservableObject {
                 try? await Task.sleep(for: .seconds(2))
             }
         }
+    }
+
+    // MARK: Onboarding
+
+    func showOnboarding() {
+        if let window = onboardingWindow {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate()
+            return
+        }
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 540),
+            styleMask: [.titled, .closable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: OnboardingView(
+            hotkeyLabel: hotkeys.hotkey.label,
+            onFinish: { [weak self] in self?.finishOnboarding() }
+        ))
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+        onboardingWindow = window
+    }
+
+    private func finishOnboarding() {
+        UserDefaults.standard.set(true, forKey: Self.onboardingKey)
+        onboardingWindow?.close()
+        onboardingWindow = nil
     }
 
     // MARK: Hotkey (hold → wheel → release)

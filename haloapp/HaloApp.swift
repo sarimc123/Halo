@@ -41,6 +41,7 @@ struct MenuContent: View {
         }
         Button("Read Screen Region…") { controller.readScreenFromMenu() }
         Divider()
+        Button("Welcome Guide…") { controller.showOnboarding() }
         SettingsLink { Text("Settings…") }
             .keyboardShortcut(",")
         Button("Quit Halo") { NSApp.terminate(nil) }
