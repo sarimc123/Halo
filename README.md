@@ -10,7 +10,7 @@ An on-device AI assistant for macOS that works on any text, in any app. Highligh
 **[Download Halo.zip](https://github.com/sarimc123/Halo/releases/latest/download/Halo.zip)**
 
 Unzip it and drag **Halo.app** into your Applications folder.
-
+After turning it on, macOS downloads the model in the background. This can take a few minutes.
 ## Requirements
 
 - macOS 26 or later
