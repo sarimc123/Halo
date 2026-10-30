@@ -28,9 +28,16 @@ Halo isn't signed with a paid Apple Developer certificate, so macOS will block i
 
 Or run this once in Terminal:
 
+If in Aplications:
 ```bash
 xattr -dr com.apple.quarantine /Applications/Halo.app
 ```
+
+If on Desktop:
+```bash
+xattr -dr com.apple.quarantine ~/Desktop/Halo.app
+```
+
 
 ## Permissions
 
