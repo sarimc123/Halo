@@ -15,6 +15,7 @@ After turning it on, macOS downloads the model in the background. This can take 
 
 - macOS 26 or later
 - A Mac with Apple silicon and Apple Intelligence turned on (System Settings → Apple Intelligence & Siri)
+- Recomended M2 chip and on. Slow on M1 chip.
 
 Everything runs on Apple's on-device model, so your text never leaves your Mac.
 
